@@ -7,7 +7,15 @@ from scipy.optimize import minimize # type: ignore
 
 import dataclasses as dc
 
-from typing import List, Optional, TextIO
+from typing import List, Optional, TextIO, Tuple
+
+YEAR_DAYS: float = 365.25
+
+_FIT_BOUNDS: List[Tuple[Optional[float], Optional[float]]] = [
+    (0.0, None), # initial rate
+    (0.0, None), # nominal annual decline
+    (0.0, 2.0),  # b
+]
 
 @dc.dataclass(frozen=True)
 class ArpsDecline:
@@ -21,7 +29,7 @@ class ArpsDecline:
         if self.Di_nom < 0.0:
             raise ValueError('Negative Di_nom')
         if self.b < 0.0 or self.b > 2.0:
-            raise ValueError('Invalid b')
+            raise ValueError(f'Invalid b: {self.b}')
 
     # time (years)
     # returns (daily rate)
@@ -35,6 +43,14 @@ class ArpsDecline:
               self.qi / (1.0 + self.b * self.Di_nom * time) ** (1.0 / self.b)
             )
 
+    @staticmethod
+    def clamped(qi: float, Di_nom: float, b: float) -> 'ArpsDecline':
+        return ArpsDecline(
+            max(qi, 0.0),
+            max(Di_nom, 0.0),
+            max(min(b, 2.0), 0.0),
+        )
+
 @dc.dataclass(frozen=True)
 class WellProduction:
     well_name: str
@@ -45,8 +61,21 @@ class WellProduction:
         if len(self.days_on) != len(self.oil):
             raise ValueError('Different lengths for days on and oil rate')
 
-def best_fit(well_production):
-    pass
+    def best_fit(self) -> ArpsDecline:
+        initial_guess = np.array([
+            np.max(self.oil), # guess qi = peak rate
+            0.7, # guess Di
+            1.0, # guess b
+        ])
+        fit = minimize(lambda params: self._sse(ArpsDecline.clamped(*params)),
+                initial_guess, method='L-BFGS-B', bounds=_FIT_BOUNDS)
+        return ArpsDecline.clamped(*fit.x)
+
+    # sum of squared error for a given fit to this data
+    def _sse(self, fit: ArpsDecline) -> float:
+        time_years = self.days_on / YEAR_DAYS
+        forecast = fit.rate(time_years)
+        return np.sum((forecast - self.oil) ** 2)
 
 def read_production_csv(csv_file: TextIO) -> List[WellProduction]:
     reader = csv.reader(csv_file)
@@ -103,6 +132,9 @@ def main(argv: List[str]) -> int:
 
     for well in data:
         plt.semilogy(well.days_on, well.oil)
+        best_fit = well.best_fit()
+        plt.semilogy(well.days_on, best_fit.rate(well.days_on / YEAR_DAYS))
+
     plt.savefig('plot.png')
 
     return 0
