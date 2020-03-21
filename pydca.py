@@ -11,6 +11,9 @@ from typing import List, Optional, TextIO, Tuple
 
 YEAR_DAYS: float = 365.25
 
+_GUESS_DI_NOM: float = 1.0
+_GUESS_B = 1.5
+
 _FIT_BOUNDS: List[Tuple[Optional[float], Optional[float]]] = [
     (0.0, None), # initial rate
     (0.0, None), # nominal annual decline
@@ -64,12 +67,28 @@ class WellProduction:
     def best_fit(self) -> ArpsDecline:
         initial_guess = np.array([
             np.max(self.oil), # guess qi = peak rate
-            0.7, # guess Di
-            1.0, # guess b
+            _GUESS_DI_NOM,
+            _GUESS_B,
         ])
-        fit = minimize(lambda params: self._sse(ArpsDecline.clamped(*params)),
+
+        filtered = self.peak_forward().no_downtime()
+
+        fit = minimize(
+                lambda params: filtered._sse(ArpsDecline.clamped(*params)),
                 initial_guess, method='L-BFGS-B', bounds=_FIT_BOUNDS)
         return ArpsDecline.clamped(*fit.x)
+
+    # filter this data set to only peak-forward production
+    def peak_forward(self) -> 'WellProduction':
+        peak_idx = np.argmax(self.oil)
+        return WellProduction(
+                self.well_name, self.days_on[peak_idx:], self.oil[peak_idx:])
+
+    # filter this data set to drop "downtime" (zero-production days)
+    def no_downtime(self) -> 'WellProduction':
+        keep_idx = self.oil > 0.0
+        return WellProduction(
+                self.well_name, self.days_on[keep_idx], self.oil[keep_idx])
 
     # sum of squared error for a given fit to this data
     def _sse(self, fit: ArpsDecline) -> float:
