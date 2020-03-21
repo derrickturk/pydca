@@ -109,10 +109,10 @@ def plot_examples():
     hyp_decl = ArpsDecline(1000.0, 0.9, 1.5)
     hrm_decl = ArpsDecline(1000.0, 0.9, 1.0)
 
-    time = [m / 12.0 for m in range(0, 5 * 12)]
-    exp_rate = [exp_decl.rate(t) for t in time]
-    hyp_rate = [hyp_decl.rate(t) for t in time]
-    hrm_rate = [hrm_decl.rate(t) for t in time]
+    time = np.array([m / 12.0 for m in range(0, 5 * 12)])
+    exp_rate = exp_decl.rate(time)
+    hyp_rate = hyp_decl.rate(time)
+    hrm_rate = hrm_decl.rate(time)
 
     plt.semilogy(time, exp_rate)
     plt.semilogy(time, hyp_rate)
