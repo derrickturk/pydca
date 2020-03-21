@@ -9,9 +9,10 @@ import dataclasses as dc
 
 from typing import List, Optional, TextIO, Tuple
 
-YEAR_DAYS: float = 365.25
+YEAR_DAYS: float = 365.25 # days
+DOWNTIME_CUTOFF = 1.0 # daily rate
 
-_GUESS_DI_NOM: float = 1.0
+_GUESS_DI_NOM: float = 1.0 # nominal annual decline
 _GUESS_B = 1.5
 
 _FIT_BOUNDS: List[Tuple[Optional[float], Optional[float]]] = [
@@ -85,8 +86,8 @@ class WellProduction:
                 self.well_name, self.days_on[peak_idx:], self.oil[peak_idx:])
 
     # filter this data set to drop "downtime" (zero-production days)
-    def no_downtime(self) -> 'WellProduction':
-        keep_idx = self.oil > 0.0
+    def no_downtime(self, cutoff: float = DOWNTIME_CUTOFF) -> 'WellProduction':
+        keep_idx = self.oil > cutoff
         return WellProduction(
                 self.well_name, self.days_on[keep_idx], self.oil[keep_idx])
 
@@ -138,6 +139,7 @@ def plot_examples():
     plt.semilogy(time, hrm_rate)
 
     plt.savefig('examples.png')
+    plt.close()
 
 def main(argv: List[str]) -> int:
     if len(argv) != 2:
@@ -150,11 +152,12 @@ def main(argv: List[str]) -> int:
         data = read_production_csv(production_csv)
 
     for well in data:
-        plt.semilogy(well.days_on, well.oil)
+        filtered = well.peak_forward().no_downtime()
+        plt.semilogy(filtered.days_on, filtered.oil)
         best_fit = well.best_fit()
         plt.semilogy(well.days_on, best_fit.rate(well.days_on / YEAR_DAYS))
-
-    plt.savefig('plot.png')
+        plt.savefig(f'plot_{well.well_name}.png')
+        plt.close()
 
     return 0
 
