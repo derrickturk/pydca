@@ -194,17 +194,21 @@ def main(argv: List[str]) -> int:
         data = read_production_csv(production_csv, delimiter='\t')
         for well in from_monthly(data):
             if well.prior_cum is not None:
-                print(f'{well.api} has production prior to 1993; skipping',
+                print(f'{well.api}: production prior to 1993',
                         file=sys.stderr)
                 continue
+
             shift, filtered = well.peak_forward()
             if shift > PEAK_SHIFT_MAX:
-                print(f'peak occurs too late for fitting')
+                print(f'{well.api}: peak occurs too late for fitting',
+                        file=sys.stderr)
                 continue
+
             filtered = filtered.no_downtime()
             if len(filtered.days_on) < MIN_PTS_FIT:
-                print(f'not enough data for {well.api}', file=sys.stderr)
+                print(f'{well.api}: not enough data', file=sys.stderr)
                 continue
+
             plt.semilogy(filtered.days_on, filtered.oil)
             best_fit = filtered.best_fit()
             plt.semilogy(well.days_on, best_fit.rate(well.days_on / YEAR_DAYS))
