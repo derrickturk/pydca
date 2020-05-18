@@ -1,5 +1,7 @@
 import sys
 import csv
+import calendar
+from datetime import date, timedelta
 
 import numpy as np
 import matplotlib.pyplot as plt # type: ignore
@@ -7,10 +9,13 @@ from scipy.optimize import minimize # type: ignore
 
 import dataclasses as dc
 
-from typing import List, Optional, TextIO, Tuple
+from typing import Iterable, Iterator, List, Optional, TextIO, Tuple
 
 YEAR_DAYS: float = 365.25 # days
 DOWNTIME_CUTOFF = 1.0 # daily rate
+
+MIN_PTS_FIT: int = 3 # minimum # of points for fitting
+PEAK_SHIFT_MAX: int = 6 # maximum # of months to peak for fitting
 
 _GUESS_DI_NOM: float = 1.0 # nominal annual decline
 _GUESS_B = 1.5
@@ -56,10 +61,11 @@ class ArpsDecline:
         )
 
 @dc.dataclass(frozen=True)
-class WellProduction:
-    well_name: str
+class DailyOil:
+    api: str
     days_on: np.ndarray # time (days)
     oil: np.ndarray # daily rate
+    prior_cum: Optional[float] # prior cumulative as of 1993/01 if available
 
     def __post_init__(self):
         if len(self.days_on) != len(self.oil):
@@ -72,24 +78,24 @@ class WellProduction:
             _GUESS_B,
         ])
 
-        filtered = self.peak_forward().no_downtime()
-
         fit = minimize(
-                lambda params: filtered._sse(ArpsDecline.clamped(*params)),
+                lambda params: self._sse(ArpsDecline.clamped(*params)),
                 initial_guess, method='L-BFGS-B', bounds=_FIT_BOUNDS)
         return ArpsDecline.clamped(*fit.x)
 
     # filter this data set to only peak-forward production
-    def peak_forward(self) -> 'WellProduction':
+    def peak_forward(self) -> Tuple[int, 'DailyOil']:
+        if len(self.oil) == 0:
+            return 0, self
         peak_idx = np.argmax(self.oil)
-        return WellProduction(
-                self.well_name, self.days_on[peak_idx:], self.oil[peak_idx:])
+        return peak_idx, DailyOil(self.api,
+                self.days_on[peak_idx:], self.oil[peak_idx:], self.prior_cum)
 
     # filter this data set to drop "downtime" (zero-production days)
-    def no_downtime(self, cutoff: float = DOWNTIME_CUTOFF) -> 'WellProduction':
+    def no_downtime(self, cutoff: float = DOWNTIME_CUTOFF) -> 'DailyOil':
         keep_idx = self.oil > cutoff
-        return WellProduction(
-                self.well_name, self.days_on[keep_idx], self.oil[keep_idx])
+        return DailyOil(self.api, self.days_on[keep_idx], self.oil[keep_idx],
+                self.prior_cum)
 
     # sum of squared error for a given fit to this data
     def _sse(self, fit: ArpsDecline) -> float:
@@ -97,32 +103,68 @@ class WellProduction:
         forecast = fit.rate(time_years)
         return np.sum((forecast - self.oil) ** 2)
 
-def read_production_csv(csv_file: TextIO) -> List[WellProduction]:
-    reader = csv.reader(csv_file)
-    next(reader) # skip header row
+@dc.dataclass(frozen=True)
+class MonthlyRecord:
+    api: str
+    year: int
+    month: int
+    oil: Optional[float]
+    gas: Optional[float]
+    water: Optional[float]
 
-    result = list()
-    last_well_name: Optional[str] = None
+def month_days(year: int, month: int) -> int:
+    return calendar.monthrange(year, month)[1]
+
+def mid_month(year: int, month: int) -> date:
+    return date(year, month, 1) + timedelta(days=month_days(year, month) / 2)
+
+# precondition: monthly is sorted by API then date
+def from_monthly(monthly: Iterable[MonthlyRecord]) -> Iterator[DailyOil]:
+    last_api: Optional[str] = None
+    first_prod: Optional[date] = None
+    prior_cum: Optional[float] = None
     days_on: List[float] = list()
     oil: List[float] = list()
 
-    for (w, d, o) in reader:
-        if w != last_well_name:
-            if last_well_name is not None:
-                result.append(WellProduction(
-                    last_well_name, np.array(days_on), np.array(oil)))
-            days_on = list()
-            oil = list()
-            last_well_name = w
+    for m in monthly:
+        if m.api != last_api:
+            if last_api is not None:
+                yield DailyOil(last_api, np.array(days_on), np.array(oil),
+                        prior_cum)
+                days_on = list()
+                oil = list()
+            last_api = m.api
+            first_prod = None
 
-        days_on.append(float(d))
-        oil.append(float(o))
+        # NM OCD reports cumulative prior to 1993-01-01 as 1992/12 monthly
+        if m.year == 1992 and m.month == 12:
+            prior_cum = m.oil
+            continue
 
-    if last_well_name is not None:
-            result.append(WellProduction(
-                last_well_name, np.array(days_on), np.array(oil)))
+        if first_prod is None:
+            first_prod = date(m.year, m.month, 1)
 
-    return result
+        if m.oil is not None: # skip months with missing oil data
+            days_on.append((mid_month(m.year, m.month) - first_prod).days)
+            oil.append(m.oil / month_days(m.year, m.month))
+
+    if last_api is not None:
+        yield DailyOil(last_api, np.array(days_on), np.array(oil), prior_cum)
+
+def float_or_none(val: str) -> Optional[float]:
+    if val == '':
+        return None
+    return float(val)
+
+def read_production_csv(csv_file: TextIO, header: bool = True, **csvkw
+        ) -> Iterator[MonthlyRecord]:
+    reader = csv.reader(csv_file, **csvkw)
+    if header:
+        next(reader) # skip header row
+
+    for (api, yr, mo, o, g, w) in reader:
+        yield MonthlyRecord(api, int(yr), int(mo),
+                float_or_none(o), float_or_none(g), float_or_none(w))
 
 def plot_examples():
     exp_decl = ArpsDecline(1000.0, 0.9, 0.0)
@@ -149,15 +191,25 @@ def main(argv: List[str]) -> int:
     plot_examples()
 
     with open(argv[1], 'r', newline='') as production_csv:
-        data = read_production_csv(production_csv)
-
-    for well in data:
-        filtered = well.peak_forward().no_downtime()
-        plt.semilogy(filtered.days_on, filtered.oil)
-        best_fit = well.best_fit()
-        plt.semilogy(well.days_on, best_fit.rate(well.days_on / YEAR_DAYS))
-        plt.savefig(f'plot_{well.well_name}.png')
-        plt.close()
+        data = read_production_csv(production_csv, delimiter='\t')
+        for well in from_monthly(data):
+            if well.prior_cum is not None:
+                print(f'{well.api} has production prior to 1993; skipping',
+                        file=sys.stderr)
+                continue
+            shift, filtered = well.peak_forward()
+            if shift > PEAK_SHIFT_MAX:
+                print(f'peak occurs too late for fitting')
+                continue
+            filtered = filtered.no_downtime()
+            if len(filtered.days_on) < MIN_PTS_FIT:
+                print(f'not enough data for {well.api}', file=sys.stderr)
+                continue
+            plt.semilogy(filtered.days_on, filtered.oil)
+            best_fit = filtered.best_fit()
+            plt.semilogy(well.days_on, best_fit.rate(well.days_on / YEAR_DAYS))
+            plt.savefig(f'plots/{well.api}.png')
+            plt.close()
 
     return 0
 
