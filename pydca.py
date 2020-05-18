@@ -170,9 +170,9 @@ def float_or_none(val: str) -> Optional[float]:
         return None
     return float(val)
 
-def read_production_csv(csv_file: TextIO, header: bool = True, **csvkw
+def read_production_file(prod_file: TextIO, header: bool = True, **csvkw
         ) -> Iterator[MonthlyRecord]:
-    reader = csv.reader(csv_file, **csvkw)
+    reader = csv.reader(prod_file, **csvkw)
     if header:
         next(reader) # skip header row
 
@@ -199,13 +199,13 @@ def plot_examples():
 
 def main(argv: List[str]) -> int:
     if len(argv) != 2:
-        print(f'Usage: {argv[0]} production-csv', file=sys.stderr)
+        print(f'Usage: {argv[0]} production-file', file=sys.stderr)
         return 1
 
     plot_examples()
 
-    with open(argv[1], 'r', newline='') as production_csv:
-        data = read_production_csv(production_csv, delimiter='\t')
+    with open(argv[1], 'r', newline='') as production_file:
+        data = read_production_file(production_file, delimiter='\t')
         for well in from_monthly(data):
             if well.prior_cum is not None:
                 print(f'{well.api}: production prior to 1993',
