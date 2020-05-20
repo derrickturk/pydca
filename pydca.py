@@ -180,29 +180,10 @@ def read_production_file(prod_file: TextIO, header: bool = True, **csvkw
         yield MonthlyRecord(api, int(yr), int(mo),
                 float_or_none(o), float_or_none(g), float_or_none(w))
 
-def plot_examples():
-    exp_decl = ArpsDecline(1000.0, 0.9, 0.0)
-    hyp_decl = ArpsDecline(1000.0, 0.9, 1.5)
-    hrm_decl = ArpsDecline(1000.0, 0.9, 1.0)
-
-    time = np.array([m / 12.0 for m in range(0, 5 * 12)])
-    exp_rate = exp_decl.rate(time)
-    hyp_rate = hyp_decl.rate(time)
-    hrm_rate = hrm_decl.rate(time)
-
-    plt.semilogy(time, exp_rate)
-    plt.semilogy(time, hyp_rate)
-    plt.semilogy(time, hrm_rate)
-
-    plt.savefig('examples.png')
-    plt.close()
-
 def main(argv: List[str]) -> int:
     if len(argv) != 2:
         print(f'Usage: {argv[0]} production-file', file=sys.stderr)
         return 1
-
-    plot_examples()
 
     with open(argv[1], 'r', newline='') as production_file:
         data = read_production_file(production_file, delimiter='\t')
